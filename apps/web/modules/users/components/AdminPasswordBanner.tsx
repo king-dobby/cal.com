@@ -3,7 +3,9 @@
 /**
  * Self-hosted: admin password banner disabled.
  */
-const AdminPasswordBanner = () => null;
+export type AdminPasswordBannerProps = Record<string, never>;
+
+const AdminPasswordBanner = (_props: AdminPasswordBannerProps) => null;
 
 export default AdminPasswordBanner;
 
