@@ -19,6 +19,8 @@ export class DeploymentsService {
   ) {}
 
   async checkLicense() {
+    // Self-hosted: always valid
+    return true;
     if (this.configService.get("e2e")) {
       return true;
     }
