@@ -1,35 +1,34 @@
-name: Build Cal.com Docker Image
+name: Build Cal.com Docker Images
 
 on:
   workflow_dispatch:
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: amorris3925/calcom-unlocked
+    inputs:
+      target:
+        description: "Which image to build"
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - web
+          - api
+          - both
 
 jobs:
-  build:
+  build-web:
+    if: inputs.target == 'web' || inputs.target == 'both'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -41,6 +40,74 @@ jobs:
             NEXTAUTH_SECRET=buildtimesecret
             CALENDSO_ENCRYPTION_KEY=buildtimekey1234567
             DATABASE_URL=postgresql://fake:fake@localhost:5432/fake
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-api:
+    if: inputs.target == 'api' || inputs.target == 'both'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Create API Dockerfile
+        run: |
+          cat > Dockerfile.api << 'EOF'
+          FROM node:20 AS builder
+          WORKDIR /calcom
+
+          ARG DATABASE_URL=postgresql://fake:fake@localhost:5432/fake
+          ARG NEXTAUTH_SECRET=buildtimesecret
+          ARG CALENDSO_ENCRYPTION_KEY=buildtimekey12345678
+          ENV DATABASE_URL=$DATABASE_URL \
+              NEXTAUTH_SECRET=$NEXTAUTH_SECRET \
+              CALENDSO_ENCRYPTION_KEY=$CALENDSO_ENCRYPTION_KEY \
+              NEXT_PUBLIC_WEBAPP_URL=http://localhost:3000 \
+              NEXT_PUBLIC_API_V2_ROOT_URL=http://localhost:5555
+
+          COPY package.json yarn.lock .yarnrc.yml ./
+          COPY .yarn .yarn
+          COPY packages packages
+          COPY apps/api/v1 apps/api/v1
+
+          RUN yarn config set httpTimeout 1200000
+          RUN yarn install
+          RUN yarn workspace @calcom/prisma generate
+          RUN yarn --cwd apps/api/v1 run build
+
+          FROM node:20-alpine AS runner
+          WORKDIR /calcom
+          ENV NODE_ENV=production
+
+          RUN apk add --no-cache netcat-openbsd wget
+
+          COPY --from=builder /calcom/node_modules ./node_modules
+          COPY --from=builder /calcom/packages ./packages
+          COPY --from=builder /calcom/apps/api/v1 ./apps/api/v1
+          COPY --from=builder /calcom/package.json ./package.json
+
+          EXPOSE 3002
+
+          HEALTHCHECK --interval=30s --timeout=10s --retries=5 \
+            CMD wget --spider http://localhost:3002/api/v1 || exit 1
+
+          CMD ["sh", "-c", "npx prisma migrate deploy --schema packages/prisma/schema.prisma 2>/dev/null; cd apps/api/v1 && npx next start -p 3002"]
+          EOF
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: true
+          tags: ghcr.io/amorris3925/calcom-api:latest
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
