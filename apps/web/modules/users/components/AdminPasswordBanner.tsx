@@ -3,9 +3,11 @@
 /**
  * Self-hosted: admin password banner disabled.
  */
-export type AdminPasswordBannerProps = Record<string, never>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AdminPasswordBannerProps = any;
 
-const AdminPasswordBanner = (_props: AdminPasswordBannerProps) => null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AdminPasswordBanner = (_props: any) => null;
 
 export default AdminPasswordBanner;
 
