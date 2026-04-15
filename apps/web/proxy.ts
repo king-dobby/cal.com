@@ -1,7 +1,8 @@
 import process from "node:process";
 import { getCspHeader, getCspNonce } from "@lib/csp";
+import { shipDoc } from "@lib/elasticExporter";
 import { get } from "@vercel/edge-config";
-import type { NextRequest } from "next/server";
+import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const safeGet = async <T = any>(key: string): Promise<T | undefined> => {
@@ -65,10 +66,72 @@ const shouldEnforceCsp = (url: URL) => {
   return url.pathname.startsWith("/auth/login") || url.pathname.startsWith("/login");
 };
 
-const proxy = async (req: NextRequest): Promise<NextResponse<unknown>> => {
+const ES_LOG_SAFE_HEADERS = new Set([
+  "host",
+  "user-agent",
+  "referer",
+  "accept-language",
+  "content-type",
+  "x-forwarded-for",
+  "x-real-ip",
+  "x-request-id",
+  "x-cal-signature-256",
+]);
+
+const ES_LOG_SKIP_PREFIXES = [
+  "/_next/",
+  "/favicon.ico",
+  "/static/",
+  "/assets/",
+  "/embed.js",
+  "/robots.txt",
+  "/manifest.json",
+  "/apple-touch-icon",
+];
+
+function logRequestToEs(req: NextRequest, reqId: string): Promise<void> {
+  const { pathname, search, hostname, port, protocol } = req.nextUrl;
+  if (ES_LOG_SKIP_PREFIXES.some((p) => pathname.startsWith(p))) return Promise.resolve();
+
+  const headers: Record<string, string> = {};
+  req.headers.forEach((v, k) => {
+    if (ES_LOG_SAFE_HEADERS.has(k.toLowerCase())) headers[k] = v;
+  });
+  const fwd = req.headers.get("x-forwarded-for");
+  const ip = fwd ? fwd.split(",")[0].trim() : req.headers.get("x-real-ip");
+
+  return shipDoc({
+    "@timestamp": new Date().toISOString(),
+    event: {
+      kind: "event",
+      category: ["web"],
+      type: ["access"],
+      outcome: "unknown",
+      dataset: "calcom.access",
+    },
+    trace: { id: reqId },
+    http: { request: { method: req.method, id: reqId, headers } },
+    url: {
+      path: pathname,
+      original: pathname + (search || ""),
+      query: search ? search.replace(/^\?/, "") : null,
+      scheme: protocol?.replace(":", "") || null,
+      domain: hostname || null,
+      port: port ? Number(port) : null,
+    },
+    user_agent: { original: req.headers.get("user-agent") },
+    client: { ip },
+  });
+}
+
+const proxy = async (req: NextRequest, event: NextFetchEvent): Promise<NextResponse<unknown>> => {
   const url = req.nextUrl;
   const reqWithEnrichedHeaders = enrichRequestWithHeaders({ req });
   const requestHeaders = new Headers(reqWithEnrichedHeaders.headers);
+
+  // Fire-and-forget ES shipping so request latency is unaffected
+  const reqId = req.headers.get("x-request-id") || crypto.randomUUID();
+  event.waitUntil(logRequestToEs(req, reqId));
 
   if (url.pathname.startsWith("/api/auth/signup")) {
     const isSignupDisabled = await safeGet<boolean>("isSignupDisabled");
@@ -163,7 +226,12 @@ function enrichRequestWithHeaders({ req }: { req: NextRequest }) {
 }
 
 export const config = {
-  matcher: ["/auth/login", "/login", "/apps/installed", "/auth/logout", "/:path*/embed", "/availability", "/api/auth/signup"],
+  // Broadened from the original auth/embed-only matcher to also cover API
+  // routes (webhooks, booking flows) so every request is shipped to
+  // Elasticsearch. Static assets are still excluded. The original auth +
+  // embed + CSP branches remain pathname-guarded inside proxy(), so
+  // widening the matcher is safe.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|assets/|static/|embed.js).*)"],
 };
 
 export default proxy;
