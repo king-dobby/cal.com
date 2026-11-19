@@ -868,6 +868,8 @@ describe("createEvent", () => {
     const patchCall = eventsPatchMock.mock.calls[0][0];
     expect(patchCall.calendarId).toBe("primary");
     expect(patchCall.eventId).toBe("mock-event-with-hangout");
+    // The insert is silent, so the patch that follows it must be too, or Google mails every guest.
+    expect(patchCall.sendUpdates).toBe("none");
     expect(patchCall.requestBody.location).toBe(mockHangoutLink);
     expect(patchCall.requestBody.description).toBeDefined();
 
@@ -940,6 +942,7 @@ describe("updateEvent", () => {
     const patchCall = eventsPatchMock.mock.calls[0][0];
     expect(patchCall.calendarId).toBe("primary");
     expect(patchCall.eventId).toBe("existing-event-id");
+    expect(patchCall.sendUpdates).toBe("none");
     expect(patchCall.requestBody.location).toBe(mockHangoutLink);
     expect(patchCall.requestBody.description).toBeDefined();
 
