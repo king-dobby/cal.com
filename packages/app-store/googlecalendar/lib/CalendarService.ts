@@ -334,6 +334,8 @@ class GoogleCalendarService implements Calendar {
           await calendar.events.patch({
             calendarId: selectedCalendar,
             eventId: event.id || "",
+            // Every write here is silent, like the insert above: see SILENT_PATCH.
+            sendUpdates: "none",
             requestBody: {
               location: getLocation({
                 videoCallData: calEvent.videoCallData,
@@ -410,6 +412,11 @@ class GoogleCalendarService implements Calendar {
               calendar.events.patch({
                 calendarId: selectedCalendar,
                 eventId: createdEventId,
+                // SILENT_PATCH. The insert above is silent, but this patch changes the description and location,
+                // so without this Google mailed every guest an "Updated invitation" seconds after each booking
+                // (2026-11-19: a Homescreen buyer got it beside the booking's own confirmation, in the host's time
+                // zone, with a link to change the booking outside the app that booked it).
+                sendUpdates: "none",
                 requestBody: patchRequestBody,
               }),
             { label: "createEvent/patch-hangout-link", logger: this.log }
@@ -561,6 +568,8 @@ class GoogleCalendarService implements Calendar {
               calendar.events.patch({
                 calendarId: selectedCalendar,
                 eventId: updatedEventId,
+                // Silent, like the update above: see SILENT_PATCH.
+                sendUpdates: "none",
                 requestBody: patchRequestBody,
               }),
             { label: "updateEvent/patch-hangout-link", logger: this.log }
